@@ -1,0 +1,29 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build project
+        run: echo "Building the project..."
+
+      - name: Verify index.html exists
+        run: |
+          if [ -f index.html ]; then
+            echo "Build successful: index.html found."
+          else
+            echo "Build failed: index.html not found."
+            exit 1
+          fi
+
+      - name: Generate output log
+        run: echo "CI pipeline completed at $(date)" > build-log.txt
