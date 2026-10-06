@@ -1,0 +1,83 @@
+- name: Configure Server
+  hosts: servers
+  become: yes
+  vars:
+    app_src: "{{ playbook_dir }}/../app/"
+    app_dest: /opt/devops-lab-app
+    image_name: devops-lab-app
+    kubectl_version: v1.34.1
+
+  tasks:
+    - name: Install Docker and Kubernetes host dependencies
+      ansible.builtin.dnf:
+        name:
+          - docker
+          - conntrack-tools
+          - iptables-nft
+        state: present
+
+    - name: Start Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Allow ec2-user to run docker without sudo
+      ansible.builtin.user:
+        name: ec2-user
+        groups: docker
+        append: yes
+
+    - name: Install kubectl
+      ansible.builtin.get_url:
+        url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: "0755"
+
+    - name: Copy application source
+      ansible.builtin.copy:
+        src: "{{ app_src }}"
+        dest: "{{ app_dest }}/"
+        mode: "0644"
+      register: app_files
+
+    - name: Build Docker image
+      ansible.builtin.command: docker build -t {{ image_name }}:latest {{ app_dest }}
+      when: app_files.changed
+
+    - name: Check whether the app container exists
+      ansible.builtin.command: docker ps -aq --filter name=^{{ image_name }}$
+      register: existing
+      changed_when: false
+
+    - name: Remove old app container after a rebuild
+      ansible.builtin.command: docker rm -f {{ image_name }}
+      when: app_files.changed and existing.stdout != ""
+
+    - name: Run app container on port 80
+      ansible.builtin.command: >
+        docker run -d --name {{ image_name }} --restart unless-stopped
+        -p 80:80 {{ image_name }}:latest
+      when: app_files.changed or existing.stdout == ""
+
+    - name: Verify the app responds
+      ansible.builtin.uri:
+        url: http://localhost
+        return_content: yes
+      register: page
+      retries: 5
+      delay: 3
+      until: page.status == 200
+      failed_when: "'DevOps CI/CD Virtual Lab' not in page.content"
+
+    - name: Show versions
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - docker --version
+        - kubectl version --client
+      register: versions
+      changed_when: false
+
+    - name: Print versions
+      ansible.builtin.debug:
+        msg: "{{ versions.results | map(attribute='stdout') | list }}"
